@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PNG转3D网格工具 (严格凸性修复版)</title>
+    
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="sidebar">
+        <div style="margin-bottom: 15px;">
+            <button onclick="document.getElementById('fileInput').click()" style="background: #444; border: 1px dashed #777; height: 40px;">📂 打开图片 (PNG)</button>
+            <input type="file" id="fileInput" accept="image/png" onchange="handleFileSelect(event)">
+        </div>
+
+        <div class="step-header">
+            <span class="step-badge">1</span> 定义遮罩 (抠图)
+        </div>
+        
+        <div class="control-group">
+            <label class="eyedropper-toggle" id="eyedropperBtn" title="点击启用，然后在画布上点击颜色">
+                <span>🖌️ 吸管工具 (点图吸色)</span>
+                <input type="checkbox" id="colorPickerMode" onchange="toggleColorPicker()">
+            </label>
+            
+            <div id="keyColorDisplay" class="hidden" style="background: #333; padding: 8px; border-radius: 4px; margin: 8px 0; border: 1px solid #555;">
+                <div style="display:flex; align-items:center; justify-content: space-between;">
+                    <div style="display:flex; align-items:center;">
+                        <div id="keyColorBox" class="color-preview"></div>
+                        <span id="keyColorText" style="font-weight:bold; font-size: 12px; color: #fff;"></span>
+                    </div>
+                    <button style="width:auto; padding: 2px 8px; font-size: 11px; height: 20px;" onclick="clearKeyColor()">清除</button>
+                </div>
+            </div>
+
+            <label id="thresholdLabel" style="margin-top:10px;">Alpha 阈值</label>
+            <div class="slider-row">
+                <input type="range" id="commonThreshold" min="1" max="100" value="50" oninput="updateMaskPreview()">
+                <span class="value" id="val-commonThreshold">50</span>
+            </div>
+            
+            <label style="margin-top:10px;">选区膨胀 (Dilate)</label>
+            <div class="slider-row">
+                <input type="range" id="expansion" min="0" max="20" value="0" oninput="updateMaskPreview()">
+                <span class="value" id="val-expansion">0</span>
+            </div>
+        </div>
+
+        <button id="generateBtn" class="btn-primary" onclick="startMeshGeneration()" disabled>
+            ▶ 生成网格 <span class="opt-badge">Convex Fix</span>
+        </button>
+        <div style="text-align: center; font-size: 11px; color: #888; margin-top: 5px;">* 严格凸性检测 & 共线清理</div>
+
+        <div style="height: 15px;"></div>
+
+        <div class="step-header">
+            <span class="step-badge">2</span> 网格优化
+        </div>
+        <div class="control-group">
+            <label>边缘精度 (值越小越精细)</label>
+            <div class="slider-row">
+                <input type="range" id="precision" min="1" max="200" value="20" oninput="updateMeshIfPossible()">
+                <span class="value" id="val-precision">2.0px</span>
+            </div>
+        </div>
+
+        <div style="margin-top: auto;">
+            <button onclick="resetView()" style="margin-bottom: 10px;">↺ 重置画布视角</button>
+            <button id="exportBtn" class="btn-export" onclick="exportModel()" disabled>⬇ 导出 OBJ</button>
+        </div>
+    </div>
+
+    <div class="main-view" id="mainView">
+        <div id="modeBadge" class="mode-indicator hidden">当前模式</div>
+        <div class="view-controls">
+            <label>
+                <input type="checkbox" id="showMaskPreview" checked onchange="requestAnimationFrame(draw)">
+                <span>显示红色遮罩 (调试)</span>
+            </label>
+            <label>
+                <input type="checkbox" id="showWireframe" checked onchange="requestAnimationFrame(draw)">
+                <span>显示线框 (Wireframe)</span>
+            </label>
+            <label>
+                <input type="checkbox" id="showPoints" checked onchange="requestAnimationFrame(draw)">
+                <span>显示顶点 (Vertices)</span>
+            </label>
+        </div>
+        <canvas id="canvas"></canvas>
+    </div>
+    
+    <div class="status-bar">
+        <span id="statusBar">就绪</span>
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <span id="polyCount" style="font-family: monospace; color: var(--accent); font-weight: bold;"></span>
+    </div>
+
+
+<script src="script.js"></script>
+</body>
+</html>
