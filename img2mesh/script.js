@@ -310,7 +310,11 @@ function resizeCanvas() {
 
 function handleFileSelect(event) {
     const file = event.target.files[0];
-    if (!file) return;
+    processFile(file);
+}
+
+function processFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
     statusBar.innerText = "正在读取图片...";
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -338,6 +342,40 @@ function handleFileSelect(event) {
     reader.readAsDataURL(file);
 }
 
+// --- 拖拽与粘贴支持 ---
+const dropArea = document.getElementById('dropArea');
+if (dropArea) {
+    dropArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropArea.style.borderColor = 'var(--primary)';
+        dropArea.style.background = 'rgba(99, 102, 241, 0.1)';
+    });
+    dropArea.addEventListener('dragleave', () => {
+        dropArea.style.borderColor = 'var(--border)';
+        dropArea.style.background = 'var(--input-bg)';
+    });
+    dropArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropArea.style.borderColor = 'var(--border)';
+        dropArea.style.background = 'var(--input-bg)';
+        const file = e.dataTransfer.files[0];
+        processFile(file);
+    });
+}
+
+document.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+            const file = items[i].getAsFile();
+            processFile(file);
+            statusBar.innerText = "已从剪贴板加载图片";
+            break;
+        }
+    }
+});
+
 function detectTransparencyAndSwitch(img) {
     const tc = document.createElement('canvas'); tc.width = img.width; tc.height = img.height;
     tc.getContext('2d').drawImage(img, 0, 0);
@@ -361,18 +399,21 @@ function detectTransparencyAndSwitch(img) {
 function setAppMode(mode) {
     appMode = mode;
     modeBadge.classList.remove('hidden', 'mode-mask', 'mode-mesh');
+    const genBtn = document.getElementById('generateBtn');
     if (mode === 'mask') {
         modeBadge.innerText = "预览遮罩 (Preview)";
         modeBadge.classList.add('mode-mask');
         document.getElementById('exportBtn').disabled = true;
-        document.getElementById('generateBtn').classList.remove('secondary');
-        document.getElementById('generateBtn').innerText = "▶ 生成网格";
+        genBtn.classList.remove('btn-secondary');
+        genBtn.classList.add('btn-primary');
+        genBtn.innerHTML = `<svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg> 生成网格 <span class="opt-badge">Convex Fix</span>`;
     } else {
         modeBadge.innerText = "网格视图 (Mesh)";
         modeBadge.classList.add('mode-mesh');
         document.getElementById('exportBtn').disabled = false;
-        document.getElementById('generateBtn').classList.add('secondary');
-        document.getElementById('generateBtn').innerText = "↻ 重新生成";
+        genBtn.classList.remove('btn-primary');
+        genBtn.classList.add('btn-secondary');
+        genBtn.innerHTML = `<svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z" /></svg> 重新生成`;
     }
     requestAnimationFrame(draw);
 }
@@ -758,5 +799,16 @@ function exportModel() {
     a.href = url; a.download = "model_convex_fix.obj";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+// --- 主题切换支持 ---
+const themeToggle = document.getElementById('themeToggle');
+let currentTheme = 'dark';
+
+if (themeToggle) {
+    themeToggle.onclick = () => {
+        currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', currentTheme);
+    };
 }
 
