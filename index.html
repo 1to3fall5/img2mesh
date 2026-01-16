@@ -3,76 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PNG转3D网格工具 (严格凸性修复版)</title>
-    
-<link rel="stylesheet" href="style.css">
+    <title>Img2Mesh Pro - 3D Generator</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <div class="sidebar">
-        <div style="margin-bottom: 15px;">
-            <button onclick="document.getElementById('fileInput').click()" style="background: #444; border: 1px dashed #777; height: 40px;">📂 打开图片 (PNG)</button>
-            <input type="file" id="fileInput" accept="image/png" onchange="handleFileSelect(event)">
+<header>
+    <div class="brand">
+        <svg style="width:24px;height:24px" viewBox="0 0 24 24">
+            <path fill="currentColor" d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15M5,15.91L11,19.29V12.58L5,9.21V15.91M19,15.91V9.21L13,12.58V19.29L19,15.91Z" />
+        </svg>
+        Img2Mesh <span>Pro</span>
+    </div>
+    <button id="themeToggle" class="theme-toggle">
+        <svg style="width:16px;height:16px" viewBox="0 0 24 24"><path fill="currentColor" d="M12,18C11.11,18 10.26,17.8 9.5,17.45C11.56,16.5 13,14.42 13,12C13,9.58 11.56,7.5 9.5,6.55C10.26,6.2 11.11,6 12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18M20,8.69V4H15.31L12,0.69L8.69,4H4V8.69L0.69,12L4,15.31V20H8.69L12,23.31L15.31,20H20V15.31L23.31,12L20,8.69Z" /></svg>
+        主题
+    </button>
+</header>
+
+<div class="main-layout">
+    <aside class="sidebar">
+        <div class="panel-section">
+            <div class="step-header">
+                <span class="step-badge">1</span> 图片源
+            </div>
+            <label class="file-drop-area" id="dropArea">
+                <input type="file" id="fileInput" accept="image/png" onchange="handleFileSelect(event)">
+                <svg class="file-icon" viewBox="0 0 24 24">
+                    <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                </svg>
+                <div class="file-msg">点击或拖拽 PNG 图片至此处<br><kbd>Ctrl+V</kbd> 粘贴</div>
+            </label>
         </div>
 
-        <div class="step-header">
-            <span class="step-badge">1</span> 定义遮罩 (抠图)
-        </div>
-        
-        <div class="control-group">
-            <label class="eyedropper-toggle" id="eyedropperBtn" title="点击启用，然后在画布上点击颜色">
-                <span>🖌️ 吸管工具 (点图吸色)</span>
-                <input type="checkbox" id="colorPickerMode" onchange="toggleColorPicker()">
-            </label>
+        <div class="panel-section">
+            <div class="step-header">
+                <span class="step-badge">2</span> 定义遮罩 (抠图)
+            </div>
             
-            <div id="keyColorDisplay" class="hidden" style="background: #333; padding: 8px; border-radius: 4px; margin: 8px 0; border: 1px solid #555;">
-                <div style="display:flex; align-items:center; justify-content: space-between;">
-                    <div style="display:flex; align-items:center;">
-                        <div id="keyColorBox" class="color-preview"></div>
-                        <span id="keyColorText" style="font-weight:bold; font-size: 12px; color: #fff;"></span>
+            <div class="control-group">
+                <label class="eyedropper-toggle" id="eyedropperBtn" title="点击启用，然后在画布上点击颜色">
+                    <span>🖌️ 吸管工具 (点图吸色)</span>
+                    <input type="checkbox" id="colorPickerMode" onchange="toggleColorPicker()">
+                </label>
+                
+                <div id="keyColorDisplay" class="hidden" style="background: var(--background); padding: 10px; border-radius: 6px; margin: 12px 0; border: 1px solid var(--border);">
+                    <div style="display:flex; align-items:center; justify-content: space-between;">
+                        <div style="display:flex; align-items:center;">
+                            <div id="keyColorBox" class="color-preview"></div>
+                            <span id="keyColorText" style="font-family: monospace; font-size: 12px; color: var(--text-main);"></span>
+                        </div>
+                        <button style="width:auto; padding: 4px 10px; font-size: 11px; height: 24px;" onclick="clearKeyColor()">清除</button>
                     </div>
-                    <button style="width:auto; padding: 2px 8px; font-size: 11px; height: 20px;" onclick="clearKeyColor()">清除</button>
+                </div>
+
+                <label id="thresholdLabel" style="margin-top:12px;">Alpha 阈值</label>
+                <div class="slider-row">
+                    <input type="range" id="commonThreshold" min="1" max="100" value="50" oninput="updateMaskPreview()">
+                    <span class="value" id="val-commonThreshold">50</span>
+                </div>
+                
+                <label style="margin-top:12px;">选区膨胀 (Dilate)</label>
+                <div class="slider-row">
+                    <input type="range" id="expansion" min="0" max="20" value="0" oninput="updateMaskPreview()">
+                    <span class="value" id="val-expansion">0</span>
                 </div>
             </div>
-
-            <label id="thresholdLabel" style="margin-top:10px;">Alpha 阈值</label>
-            <div class="slider-row">
-                <input type="range" id="commonThreshold" min="1" max="100" value="50" oninput="updateMaskPreview()">
-                <span class="value" id="val-commonThreshold">50</span>
-            </div>
-            
-            <label style="margin-top:10px;">选区膨胀 (Dilate)</label>
-            <div class="slider-row">
-                <input type="range" id="expansion" min="0" max="20" value="0" oninput="updateMaskPreview()">
-                <span class="value" id="val-expansion">0</span>
-            </div>
         </div>
 
-        <button id="generateBtn" class="btn-primary" onclick="startMeshGeneration()" disabled>
-            ▶ 生成网格 <span class="opt-badge">Convex Fix</span>
-        </button>
-        <div style="text-align: center; font-size: 11px; color: #888; margin-top: 5px;">* 严格凸性检测 & 共线清理</div>
+        <div class="panel-section">
+            <div class="step-header">
+                <span class="step-badge">3</span> 生成与优化
+            </div>
+            <button id="generateBtn" class="btn-primary" onclick="startMeshGeneration()" disabled>
+                <svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>
+                生成网格 <span class="opt-badge">Convex Fix</span>
+            </button>
+            <div style="text-align: center; font-size: 11px; color: var(--text-sub); margin-top: 8px;">* 严格凸性检测 & 共线清理</div>
 
-        <div style="height: 15px;"></div>
-
-        <div class="step-header">
-            <span class="step-badge">2</span> 网格优化
-        </div>
-        <div class="control-group">
-            <label>边缘精度 (值越小越精细)</label>
-            <div class="slider-row">
-                <input type="range" id="precision" min="1" max="200" value="20" oninput="updateMeshIfPossible()">
-                <span class="value" id="val-precision">2.0px</span>
+            <div class="control-group" style="margin-top: 15px;">
+                <label>边缘精度 (值越小越精细)</label>
+                <div class="slider-row">
+                    <input type="range" id="precision" min="1" max="200" value="20" oninput="updateMeshIfPossible()">
+                    <span class="value" id="val-precision">2.0px</span>
+                </div>
             </div>
         </div>
 
-        <div style="margin-top: auto;">
-            <button onclick="resetView()" style="margin-bottom: 10px;">↺ 重置画布视角</button>
-            <button id="exportBtn" class="btn-export" onclick="exportModel()" disabled>⬇ 导出 OBJ</button>
+        <div class="panel-section" style="margin-top: auto;">
+            <button onclick="resetView()" style="margin-bottom: 10px;">
+                <svg style="width:16px;height:16px" viewBox="0 0 24 24"><path fill="currentColor" d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z" /></svg>
+                重置画布视角
+            </button>
+            <button id="exportBtn" class="btn-export" onclick="exportModel()" disabled>
+                <svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z" /></svg>
+                导出 OBJ 模型
+            </button>
         </div>
-    </div>
+    </aside>
 
-    <div class="main-view" id="mainView">
+    <main class="main-view" id="mainView">
         <div id="modeBadge" class="mode-indicator hidden">当前模式</div>
         <div class="view-controls">
             <label>
@@ -89,16 +119,18 @@
             </label>
         </div>
         <canvas id="canvas"></canvas>
-    </div>
-    
-    <div class="status-bar">
+    </main>
+</div>
+
+<footer class="status-bar">
+    <div style="display: flex; align-items: center; gap: 15px;">
         <span id="statusBar">就绪</span>
         <div class="progress-container" id="progressContainer">
             <div class="progress-bar" id="progressBar"></div>
         </div>
-        <span id="polyCount" style="font-family: monospace; color: var(--accent); font-weight: bold;"></span>
     </div>
-
+    <span id="polyCount" style="font-family: monospace; color: var(--primary); font-weight: bold;"></span>
+</footer>
 
 <script src="script.js"></script>
 </body>
