@@ -68,7 +68,7 @@ header {
 
 .main-layout { 
     display: grid; 
-    grid-template-columns: 340px 1fr; 
+    grid-template-columns: 340px 1fr 300px; 
     height: calc(100vh - 65px); 
     overflow: hidden; 
 }
@@ -98,6 +98,18 @@ header {
 
 .main-view.picking { cursor: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3R5bGU9ImZpbHRlcDogZHJvcC1zaGFkb3coMXB4IDFweCAycHggYmxhY2spOyI+PHBhdGggZD0iTTIgMjJsNS01Ii8+PHBhdGggZD0iTTEzLjUgNi41bDUgNSIvPjxwYXRoIGQ9Ik0yMS4yMSA4LjM0YTIuMTIgMi4xMiAwIDAwMC0zbC0zLjM1LTMuMzRhMi4xMiAyLjEyIDAgMDAtMyAwTDQuNSAxMi4zNiAyIDIybDkuNjQtMi41IDEwLjM2LTEwLjM2LTEwLjM2eiIvPjwvc3ZnPg==') 0 24, crosshair; }
 .main-view:active { cursor: grabbing; }
+
+.right-sidebar { 
+    background: var(--surface); 
+    border-left: 1px solid var(--border); 
+    padding: 20px; 
+    display: flex; 
+    flex-direction: column; 
+    gap: 24px; 
+    overflow-y: auto; 
+    flex-shrink: 0; 
+    z-index: 2; 
+}
 
 .step-header { font-size: 12px; font-weight: 700; color: var(--text-sub); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; display: flex; align-items: center; }
 .step-badge { background: var(--primary); color: white; border-radius: 50%; width: 18px; height: 18px; text-align: center; line-height: 18px; font-size: 10px; display: inline-block; margin-right: 8px; font-weight: bold; }
