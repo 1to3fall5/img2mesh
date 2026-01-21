@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Img2Mesh Pro - 3D Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- TGA Loader Support (同步自 Sprite 项目) -->
+    <script src="https://cdn.jsdelivr.net/gh/magicien/TGAImage@v1.0.0/tgaimage.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -24,64 +27,69 @@
 <div class="main-layout">
     <aside class="sidebar">
         <div class="panel-section">
-            <div class="step-header">
-                <span class="step-badge">1</span> 定义遮罩 (抠图)
-            </div>
+            <div class="step-header">1. 图片源</div>
+            <label class="file-drop-area" id="dropArea">
+                <input type="file" id="fileInput" accept="image/png,image/tga,.tga,image/x-tga,image/x-targa" onchange="handleFileSelect(event)">
+                <svg class="file-icon" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M13.5,16V19H10.5V16H8L12,12L16,16H13.5M13,9V3.5L18.5,9H13Z" /></svg>
+                <div class="file-msg" id="fileMsg">
+                    点击 / 拖拽 / <kbd>Ctrl+V</kbd><br>上传图片 (支持 PNG/TGA)
+                </div>
+            </label>
+        </div>
+
+        <div class="panel-section">
+            <div class="step-header">2. 选中要去掉的颜色</div>
             
-            <div class="control-group">
-                <label class="eyedropper-toggle" id="eyedropperBtn" title="点击启用，然后在画布上点击颜色">
-                    <span>🖌️ 吸管工具 (点图吸色)</span>
-                    <input type="checkbox" id="colorPickerMode" onchange="toggleColorPicker()">
-                </label>
-                
-                <div id="keyColorDisplay" class="hidden" style="background: var(--background); padding: 10px; border-radius: 6px; margin: 12px 0; border: 1px solid var(--border);">
-                    <div style="display:flex; align-items:center; justify-content: space-between;">
-                        <div style="display:flex; align-items:center;">
-                            <div id="keyColorBox" class="color-preview"></div>
-                            <span id="keyColorText" style="font-family: monospace; font-size: 12px; color: var(--text-main);"></span>
-                        </div>
-                        <button style="width:auto; padding: 4px 10px; font-size: 11px; height: 24px;" onclick="clearKeyColor()">清除</button>
+            <div class="settings-card">
+                <div class="color-tools">
+                    <div class="color-preview-box" id="keyColorBox">
+                        <input type="color" id="keyColorPicker" onchange="handleColorPickerChange(event)">
                     </div>
+                    <div id="keyColorText" style="font-family: monospace; font-size: 12px; color: var(--text-main); min-width: 60px;">#000000</div>
+                    <label class="tool-btn" id="eyedropperBtn" title="点击启用，然后在画布上点击颜色">
+                        <svg style="width:16px;height:16px" viewBox="0 0 24 24"><path fill="currentColor" d="M2,21L5,21L15,11L12,8L2,18L2,21M17.7,8.3L15.7,6.3L16.7,5.3C17.1,4.9 17.7,4.9 18.1,5.3L18.7,5.9C19.1,6.3 19.1,6.9 18.7,7.3L17.7,8.3Z" /></svg>
+                        <span>吸色工具</span>
+                        <input type="checkbox" id="colorPickerMode" onchange="toggleColorPicker()">
+                    </label>
                 </div>
 
-                <label id="thresholdLabel" style="margin-top:12px;">Alpha 阈值</label>
-                <div class="slider-row">
-                    <input type="range" id="commonThreshold" min="1" max="100" value="50" oninput="updateMaskPreview()">
-                    <span class="value" id="val-commonThreshold">50</span>
+                <div class="control-group">
+                    <label id="thresholdLabel">Alpha 阈值</label>
+                    <div class="slider-row">
+                        <input type="range" id="commonThreshold" min="1" max="100" value="50" oninput="updateMaskPreview()">
+                        <span class="value" id="val-commonThreshold">50</span>
+                    </div>
                 </div>
                 
-                <label style="margin-top:12px;">选区膨胀 (Dilate)</label>
-                <div class="slider-row">
-                    <input type="range" id="expansion" min="0" max="20" value="0" oninput="updateMaskPreview()">
-                    <span class="value" id="val-expansion">0</span>
+                <div class="control-group">
+                    <label>选区膨胀 (Dilate)</label>
+                    <div class="slider-row">
+                        <input type="range" id="expansion" min="0" max="20" value="0" oninput="updateMaskPreview()">
+                        <span class="value" id="val-expansion">0</span>
+                    </div>
                 </div>
             </div>
         </div>
 
         <div class="panel-section">
-            <div class="step-header">
-                <span class="step-badge">2</span> 生成与优化
-            </div>
-            <button id="generateBtn" class="btn-primary" onclick="startMeshGeneration()" disabled>
-                <svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>
-                生成网格 <span class="opt-badge">Convex Fix</span>
-            </button>
-            <div style="text-align: center; font-size: 11px; color: var(--text-sub); margin-top: 8px;">* 严格凸性检测 & 共线清理</div>
+            <div class="step-header">3. 调整遮罩后可以开始预览网格</div>
+            <div class="settings-card">
+                <button id="generateBtn" class="btn-primary" onclick="startMeshGeneration()" disabled>
+                    <svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>
+                    生成网格
+                </button>
 
-            <div class="control-group" style="margin-top: 15px;">
-                <label>边缘精度 (值越小越精细)</label>
-                <div class="slider-row">
-                    <input type="range" id="precision" min="1" max="200" value="20" oninput="updateMeshIfPossible()">
-                    <span class="value" id="val-precision">2.0px</span>
+                <div class="control-group">
+                    <label>边缘精度 (值越小越精细)</label>
+                    <div class="slider-row">
+                        <input type="range" id="precision" min="1" max="200" value="20" oninput="updateMeshIfPossible()">
+                        <span class="value" id="val-precision">2.0px</span>
+                    </div>
                 </div>
             </div>
         </div>
 
         <div class="panel-section" style="margin-top: auto;">
-            <button onclick="resetView()" style="margin-bottom: 10px;">
-                <svg style="width:16px;height:16px" viewBox="0 0 24 24"><path fill="currentColor" d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z" /></svg>
-                重置画布视角
-            </button>
             <button id="exportBtn" class="btn-export" onclick="exportModel()" disabled>
                 <svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z" /></svg>
                 导出 OBJ 模型
@@ -91,49 +99,61 @@
 
     <main class="main-view" id="mainView">
         <div id="modeBadge" class="mode-indicator hidden">当前模式</div>
+        
+        <!-- 顶部中心状态信息 -->
+        <div class="top-center-status">
+            <div id="statusBar">就绪</div>
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+        </div>
+
+        <!-- 左上角数据信息 -->
+        <div class="top-left-stats">
+            <div id="polyCount" class="poly-count"></div>
+        </div>
+
         <div class="view-controls">
-            <label>
-                <input type="checkbox" id="showMaskPreview" checked onchange="requestAnimationFrame(draw)">
+            <label class="toggle-switch">
                 <span>显示红色遮罩 (调试)</span>
+                <input type="checkbox" id="showMaskPreview" checked onchange="requestAnimationFrame(draw)">
+                <div class="toggle-track"></div>
             </label>
-            <label>
-                <input type="checkbox" id="showWireframe" checked onchange="requestAnimationFrame(draw)">
+            <label class="toggle-switch">
                 <span>显示线框 (Wireframe)</span>
+                <input type="checkbox" id="showWireframe" checked onchange="requestAnimationFrame(draw)">
+                <div class="toggle-track"></div>
             </label>
-            <label>
-                <input type="checkbox" id="showPoints" checked onchange="requestAnimationFrame(draw)">
+            <label class="toggle-switch">
                 <span>显示顶点 (Vertices)</span>
+                <input type="checkbox" id="showPoints" checked onchange="requestAnimationFrame(draw)">
+                <div class="toggle-track"></div>
             </label>
         </div>
-        <canvas id="canvas"></canvas>
+        <div id="emptyState" class="empty-state">
+            <svg style="width:64px;height:64px;fill:var(--border);margin-bottom:16px;" viewBox="0 0 24 24">
+                <path d="M8.5,13.5L11,16.5L14.5,12L19,18H5M21,19V5C21,3.89 20.1,3 19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19Z" />
+            </svg>
+            <p>请上传一张 PNG 图片开始<br><span style="font-size:12px;opacity:0.6">支持 点击、拖拽 或 Ctrl+V 粘贴</span></p>
+        </div>
+        <canvas id="canvas" class="hidden"></canvas>
         
-        <!-- 右侧上传区域 -->
-        <div class="right-sidebar">
-            <div class="panel-section">
-                <div class="step-header">
-                    <span class="step-badge">1</span> 图片源
-                </div>
-                <label class="file-drop-area" id="dropArea">
-                    <input type="file" id="fileInput" accept="image/png" onchange="handleFileSelect(event)">
-                    <svg class="file-icon" viewBox="0 0 24 24">
-                        <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
-                    </svg>
-                    <div class="file-msg">点击或拖拽 PNG 图片至此处<br><kbd>Ctrl+V</kbd> 粘贴</div>
-                </label>
-            </div>
+        <!-- 视图控制工具栏 (同步自 EdgeExtender) -->
+        <div id="viewControls" class="view-toolbar hidden">
+            <button id="zoomOutBtn" class="view-btn" title="缩小">
+                <svg viewBox="0 0 24 24"><path d="M19,13H5V11H19V13Z" /></svg>
+            </button>
+            <span id="zoomLevelDisplay" style="font-size: 13px; font-weight: 500; color: var(--text-main); min-width: 45px; text-align: center;">100%</span>
+            <button id="zoomInBtn" class="view-btn" title="放大">
+                <svg viewBox="0 0 24 24"><path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" /></svg>
+            </button>
+            <div style="width: 1px; height: 16px; background: var(--border); margin: 0 4px;"></div>
+            <button id="resetViewBtn" class="view-btn" title="复位视图">
+                <svg viewBox="0 0 24 24"><path d="M5,5H10V7H7V10H5V5M19,5H14V7H17V10H19V5M19,19H14V17H17V14H19V19M5,19H10V17H7V14H5V19Z" /></svg>
+            </button>
         </div>
     </main>
 </div>
-
-<footer class="status-bar">
-    <div style="display: flex; align-items: center; gap: 15px;">
-        <span id="statusBar">就绪</span>
-        <div class="progress-container" id="progressContainer">
-            <div class="progress-bar" id="progressBar"></div>
-        </div>
-    </div>
-    <span id="polyCount" style="font-family: monospace; color: var(--primary); font-weight: bold;"></span>
-</footer>
 
 <script src="script.js"></script>
 </body>

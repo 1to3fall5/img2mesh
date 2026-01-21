@@ -293,9 +293,9 @@ let meshGenerationCancel = false;
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const statusBar = document.getElementById('statusBar');
 const polyCountDisplay = document.getElementById('polyCount');
 const modeBadge = document.getElementById('modeBadge');
+const statusBar = document.getElementById('statusBar');
 const progressContainer = document.getElementById('progressContainer');
 const progressBar = document.getElementById('progressBar');
 
@@ -314,54 +314,105 @@ function handleFileSelect(event) {
 }
 
 function processFile(file) {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
+    
+    // 检查是否为 TGA 文件 (同步自 Sprite 项目逻辑)
+    const isTGA = file.name.toLowerCase().endsWith('.tga');
+    if (!file.type.startsWith('image/') && !isTGA) return;
+
     statusBar.innerText = "正在读取图片...";
+    
+    if (isTGA) {
+        const tga = new TGAImage();
+        tga.onload = function() {
+            // TGAImage 加载完成后，tga.canvas 包含图像数据
+            const dataURL = tga.canvas.toDataURL('image/png');
+            loadImage(dataURL, file.name);
+            URL.revokeObjectURL(tga.src);
+        };
+        tga.onerror = function() {
+            console.error('TGA Load Error');
+            statusBar.innerText = "TGA 解析失败，请检查文件格式";
+            URL.revokeObjectURL(tga.src);
+        };
+        tga.src = URL.createObjectURL(file);
+        return;
+    }
+
     const reader = new FileReader();
     reader.onload = function(e) {
-        const img = new Image();
-        img.onload = function() {
-            originalImage = img;
-            scale = Math.min((canvas.width * 0.8) / img.width, (canvas.height * 0.8) / img.height);
-            offsetX = (canvas.width - img.width * scale) / 2;
-            offsetY = (canvas.height - img.height * scale) / 2;
-            document.getElementById('exportBtn').disabled = true;
-            document.getElementById('generateBtn').disabled = false;
-            
-            const maxDimension = Math.max(img.width, img.height);
-            let autoPrecision = 20; 
-            if (maxDimension > 4000) autoPrecision = 120;
-            else if (maxDimension > 2000) autoPrecision = 80; 
-            else if (maxDimension > 1000) autoPrecision = 40; 
-            document.getElementById('precision').value = autoPrecision;
-            document.getElementById('val-precision').innerText = (autoPrecision * 0.1).toFixed(1) + "px";
-            
-            detectTransparencyAndSwitch(img);
-        }
-        img.src = e.target.result;
-    }
+        loadImage(e.target.result, file.name);
+    };
     reader.readAsDataURL(file);
 }
 
+function loadImage(src, fileName) {
+    const img = new Image();
+    img.onload = function() {
+        originalImage = img;
+        
+        // 重置网格数据
+        processedMeshes = [];
+        previewMask = null;
+        
+        // 切换 UI 状态
+        document.getElementById('emptyState').classList.add('hidden');
+        document.getElementById('canvas').classList.remove('hidden');
+        document.getElementById('viewControls').classList.remove('hidden');
+        
+        const fileMsgs = document.querySelectorAll('.file-msg');
+        fileMsgs.forEach(msg => {
+            msg.innerHTML = `<strong>已加载:</strong><br>${fileName}`;
+        });
+        
+        // 重置视角
+        resetView();
+        
+        document.getElementById('exportBtn').disabled = true;
+        document.getElementById('generateBtn').disabled = false;
+        
+        const maxDimension = Math.max(img.width, img.height);
+        let autoPrecision = 20; 
+        if (maxDimension > 4000) autoPrecision = 120;
+        else if (maxDimension > 2000) autoPrecision = 80; 
+        else if (maxDimension > 1000) autoPrecision = 40; 
+        document.getElementById('precision').value = autoPrecision;
+        document.getElementById('val-precision').innerText = (autoPrecision * 0.1).toFixed(1) + "px";
+        
+        detectTransparencyAndSwitch(img);
+        
+        // 确保切回 mask 模式并重绘
+        setAppMode('mask');
+        requestAnimationFrame(draw);
+    }
+    img.src = src;
+}
+
 // --- 拖拽与粘贴支持 ---
-const dropArea = document.getElementById('dropArea');
-if (dropArea) {
-    dropArea.addEventListener('dragover', (e) => {
+function setupDragAndDrop(areaId) {
+    const area = document.getElementById(areaId);
+    if (!area) return;
+
+    area.addEventListener('dragover', (e) => {
         e.preventDefault();
-        dropArea.style.borderColor = 'var(--primary)';
-        dropArea.style.background = 'rgba(99, 102, 241, 0.1)';
+        area.style.borderColor = 'var(--primary)';
+        area.style.background = 'rgba(99, 102, 241, 0.1)';
     });
-    dropArea.addEventListener('dragleave', () => {
-        dropArea.style.borderColor = 'var(--border)';
-        dropArea.style.background = 'var(--input-bg)';
+    area.addEventListener('dragleave', () => {
+        area.style.borderColor = 'var(--border)';
+        area.style.background = 'var(--input-bg)';
     });
-    dropArea.addEventListener('drop', (e) => {
+    area.addEventListener('drop', (e) => {
         e.preventDefault();
-        dropArea.style.borderColor = 'var(--border)';
-        dropArea.style.background = 'var(--input-bg)';
+        area.style.borderColor = 'var(--border)';
+        area.style.background = 'var(--input-bg)';
         const file = e.dataTransfer.files[0];
         processFile(file);
     });
 }
+
+setupDragAndDrop('dropArea');
+setupDragAndDrop('mainView');
 
 document.addEventListener('paste', (e) => {
     const items = e.clipboardData?.items;
@@ -406,7 +457,7 @@ function setAppMode(mode) {
         document.getElementById('exportBtn').disabled = true;
         genBtn.classList.remove('btn-secondary');
         genBtn.classList.add('btn-primary');
-        genBtn.innerHTML = `<svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg> 生成网格 <span class="opt-badge">Convex Fix</span>`;
+        genBtn.innerHTML = `<svg style="width:18px;height:18px" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg> 生成网格`;
     } else {
         modeBadge.innerText = "网格视图 (Mesh)";
         modeBadge.classList.add('mode-mesh');
@@ -592,11 +643,7 @@ function updateMeshIfPossible() {
 }
 
 function draw() {
-    ctx.fillStyle = "#1e1e1e";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const size = 20;
-    ctx.fillStyle = "#252525";
-    for(let y=0; y<canvas.height; y+=size) for(let x=0; x<canvas.width; x+=size) if ((x/size + y/size) % 2 === 0) ctx.fillRect(x, y, size, size);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!originalImage) return;
 
@@ -700,6 +747,7 @@ function resetView() {
     scale = Math.min((canvas.width*0.8)/originalImage.width, (canvas.height*0.8)/originalImage.height);
     offsetX = (canvas.width-originalImage.width*scale)/2;
     offsetY = (canvas.height-originalImage.height*scale)/2;
+    updateZoomDisplay();
     requestAnimationFrame(draw);
 }
 
@@ -709,32 +757,54 @@ function toggleColorPicker() {
     const label = document.getElementById('thresholdLabel');
     const slider = document.getElementById('commonThreshold');
     const valDisplay = document.getElementById('val-commonThreshold');
-    const keyColorDisplay = document.getElementById('keyColorDisplay');
 
     if (on) {
         toggleBtn.classList.add('active');
         mainView.classList.add('picking');
         label.innerText = "颜色容差 (Similarity)";
-        keyColorDisplay.classList.remove('hidden');
         slider.value = thresholdState.color;
         valDisplay.innerText = thresholdState.color;
-        if (!keyColor) statusBar.innerText = ">> 请在图片上点击要保留的颜色 <<";
+        if (!keyColor) statusBar.innerText = ">> 请在图片上点击要去掉的颜色 <<";
     } else {
         toggleBtn.classList.remove('active');
         mainView.classList.remove('picking');
         if (keyColor) {
             label.innerText = "颜色容差 (Similarity)";
-            keyColorDisplay.classList.remove('hidden');
             slider.value = thresholdState.color;
             valDisplay.innerText = thresholdState.color;
         } else {
             label.innerText = "透明度阈值 (Alpha)";
-            keyColorDisplay.classList.add('hidden');
             slider.value = thresholdState.alpha;
             valDisplay.innerText = thresholdState.alpha;
         }
         updateMaskPreview();
     }
+}
+
+function handleColorPickerChange(e) {
+    const color = e.target.value;
+    const r = parseInt(color.substr(1,2), 16);
+    const g = parseInt(color.substr(3,2), 16);
+    const b = parseInt(color.substr(5,2), 16);
+    
+    keyColor = [r, g, b];
+    
+    const colorBox = document.getElementById('keyColorBox');
+    colorBox.style.background = color;
+    colorBox.classList.add('has-color');
+    
+    document.getElementById('keyColorText').innerText = color.toUpperCase();
+    
+    // 如果当前不是吸色模式，确保标签和滑块状态正确
+    const label = document.getElementById('thresholdLabel');
+    const slider = document.getElementById('commonThreshold');
+    const valDisplay = document.getElementById('val-commonThreshold');
+    label.innerText = "颜色容差 (Similarity)";
+    slider.value = thresholdState.color;
+    valDisplay.innerText = thresholdState.color;
+    
+    statusBar.innerText = "颜色已选定，调整遮罩后可以开始预览网格";
+    updateMaskPreview();
 }
 
 function pickColor(e) {
@@ -748,27 +818,39 @@ function pickColor(e) {
         const p = tc.getContext('2d').getImageData(0,0,1,1).data;
         keyColor = [p[0], p[1], p[2]];
         
-        document.getElementById('keyColorBox').style.background = `rgb(${p[0]},${p[1]},${p[2]})`;
-        document.getElementById('keyColorText').innerText = `R:${p[0]} G:${p[1]} B:${p[2]}`;
+        const hex = "#" + ((1 << 24) + (p[0] << 16) + (p[1] << 8) + p[2]).toString(16).slice(1).toUpperCase();
+        
+        const colorBox = document.getElementById('keyColorBox');
+        colorBox.style.background = hex;
+        colorBox.classList.add('has-color');
+        
+        document.getElementById('keyColorPicker').value = hex;
+        document.getElementById('keyColorText').innerText = hex;
         
         document.getElementById('colorPickerMode').checked = false;
         toggleColorPicker(); 
         
-        statusBar.innerText = "颜色已选定，正在更新遮罩预览...";
+        statusBar.innerText = "颜色已选定，调整遮罩后可以开始预览网格";
         updateMaskPreview();
     }
 }
 
 function clearKeyColor() {
     keyColor = null;
-    document.getElementById('colorPickerMode').checked = true;
+    const colorBox = document.getElementById('keyColorBox');
+    colorBox.style.background = 'transparent';
+    colorBox.classList.remove('has-color');
+    document.getElementById('keyColorPicker').value = '#000000';
+    document.getElementById('keyColorText').innerText = '#000000';
+    
+    document.getElementById('colorPickerMode').checked = false;
     toggleColorPicker();
     updateMaskPreview();
 }
 
 function exportModel() {
     if (processedMeshes.length === 0) { alert("没有生成网格数据"); return; }
-    let objContent = "# Generated by PNG2Mesh (Convex Fix)\n";
+    let objContent = "# Generated by Img2Mesh\n";
     let globalVertCount = 0;
     const imgWidth = originalImage.width;
     const imgHeight = originalImage.height;
@@ -796,10 +878,96 @@ function exportModel() {
     const blob = new Blob([objContent], {type: "text/plain"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = "model_convex_fix.obj";
+    a.href = url; a.download = "model.obj";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
+
+// --- 视图控制功能 (同步自 EdgeExtender) ---
+const viewEls = {
+    zoomIn: document.getElementById('zoomInBtn'),
+    zoomOut: document.getElementById('zoomOutBtn'),
+    reset: document.getElementById('resetViewBtn'),
+    display: document.getElementById('zoomLevelDisplay')
+};
+
+function updateTransform() {
+    if (!originalImage) return;
+    canvas.style.transform = `translate(${offsetX - (canvas.width - originalImage.width * scale) / 2}px, ${offsetY - (canvas.height - originalImage.height * scale) / 2}px) scale(${scale / (Math.min((canvas.width * 0.8) / originalImage.width, (canvas.height * 0.8) / originalImage.height))})`;
+    // 注意：这里的 transform 逻辑由于 img2mesh 原本就在 draw 中使用了 scale/offset，
+    // 为了保持原本的 Canvas 渲染逻辑，我们直接操作原有的 scale 和 offsetX/Y 变量并触发重绘。
+}
+
+// 统一缩放逻辑
+function changeZoom(delta, centerX, centerY) {
+    if (!originalImage) return;
+    
+    const oldScale = scale;
+    scale = Math.max(0.01, Math.min(50, scale * (1 + delta)));
+    
+    if (centerX !== undefined && centerY !== undefined) {
+        // 以指定点为中心缩放
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = centerX - rect.left;
+        const mouseY = centerY - rect.top;
+        
+        const scaleRatio = scale / oldScale;
+        offsetX = mouseX - (mouseX - offsetX) * scaleRatio;
+        offsetY = mouseY - (mouseY - offsetY) * scaleRatio;
+    }
+    
+    updateZoomDisplay();
+    requestAnimationFrame(draw);
+}
+
+function updateZoomDisplay() {
+    if (!originalImage) return;
+    const baseScale = Math.min((canvas.width * 0.8) / originalImage.width, (canvas.height * 0.8) / originalImage.height);
+    const relativeZoom = Math.round((scale / baseScale) * 100);
+    viewEls.display.innerText = relativeZoom + '%';
+}
+
+// 按钮事件
+viewEls.zoomIn.onclick = () => changeZoom(0.2);
+viewEls.zoomOut.onclick = () => changeZoom(-0.2);
+viewEls.reset.onclick = () => resetView();
+
+// 滚轮缩放支持 (覆盖原本简单的滚轮)
+canvas.removeEventListener('wheel', null); // 移除可能存在的旧监听
+canvas.addEventListener('wheel', (e) => {
+    if (!originalImage) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    changeZoom(delta, e.clientX, e.clientY);
+}, { passive: false });
+
+// 鼠标拖拽平移支持
+let isPanning = false;
+let lastPanX, lastPanY;
+
+canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0 && !document.getElementById('colorPickerMode').checked) {
+        isPanning = true;
+        lastPanX = e.clientX;
+        lastPanY = e.clientY;
+    }
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (isPanning) {
+        const dx = e.clientX - lastPanX;
+        const dy = e.clientY - lastPanY;
+        offsetX += dx;
+        offsetY += dy;
+        lastPanX = e.clientX;
+        lastPanY = e.clientY;
+        requestAnimationFrame(draw);
+    }
+});
+
+window.addEventListener('mouseup', () => {
+    isPanning = false;
+});
 
 // --- 主题切换支持 ---
 const themeToggle = document.getElementById('themeToggle');
