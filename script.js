@@ -82,16 +82,20 @@ function cleanContour(points, minDistance = 1.0) {
     return clean;
 }
 
-// --- 核心算法 4: 终极拓扑优化 (严格凸性检测) ---
-// 彻底解决交叉问题：放弃相交检测，使用 4-Corner 凸性检测
+// --- 核心算法 4: Delaunay 边翻转优化 ---
+// 硬约束：翻转前后，三角形集合必须恰好覆盖同一个多边形。
+// 任何一次「非法翻转」都会让覆盖率偏离 1（面积丢失或三角形重叠）= 导出后的破面。
 function optimizeMeshTopology(vertices, indices, iterations = 8) {
-    // 2D 叉积 (有向面积)
+    const EPS = 1e-9;
+
+    // 2D 叉积 (有向面积的 2 倍)
     function orient2d(ax, ay, bx, by, cx, cy) {
         return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
     }
 
-    // Delaunay 条件 (点 D 是否在 ABC 外接圆内)
-    function inCircle(a, b, c, d) {
+    // InCircle 行列式。注意：它的符号与三角形 (a,b,c) 的绕序绑定，
+    // 必须乘上 orient2d(a,b,c) 的符号，才得到与绕序无关的「d 是否在外接圆内」。
+    function inCircleDet(a, b, c, d) {
         const ax = a.x - d.x, ay = a.y - d.y;
         const bx = b.x - d.x, by = b.y - d.y;
         const cx = c.x - d.x, cy = c.y - d.y;
@@ -99,97 +103,107 @@ function optimizeMeshTopology(vertices, indices, iterations = 8) {
             (ax * ax + ay * ay) * (bx * cy - cx * by) -
             (bx * bx + by * by) * (ax * cy - cx * ay) +
             (cx * cx + cy * cy) * (ax * by - bx * ay)
-        ) > 1e-9; 
+        );
     }
 
-    // 检查四边形 ABCD 是否严格凸 (Strictly Convex)
-    // 只有严格凸四边形，对角线翻转才是几何安全的
-    function isStrictlyConvex(a, b, c, d) {
-        // 假设顺序是 (a, b, c) 和 (a, c, d) 组成的四边形 a-b-c-d
-        // 需要检查四个角的转向是否一致 (全部 > 0)
-        // 注意传入顺序：A, B, C, D 必须是逆时针排列的四边形顶点
-        
-        // 三角形 T1: A, B, C. T2: A, C, D. 
-        // 实际四边形顶点顺序是 A -> B -> C -> D
-        
-        const cp1 = orient2d(a.x, a.y, b.x, b.y, c.x, c.y); // B 在 AC 左侧?
-        const cp2 = orient2d(b.x, b.y, c.x, c.y, d.x, d.y); // C 在 BD 左侧?
-        const cp3 = orient2d(c.x, c.y, d.x, d.y, a.x, a.y); // D 在 CA 左侧?
-        const cp4 = orient2d(d.x, d.y, a.x, a.y, b.x, b.y); // A 在 DB 左侧?
-        
-        // 所有叉积必须同号且非零 (严格凸)
-        // 这里的逻辑假设了特定的绕序，我们简化为：对角线必须完全在内部
-        // 更简单的判定：新的对角线 BD 与 AC 必须有严格的物理相交
-        
-        // 回归物理相交检测，但这次不仅检测对角线，还检测是否退化
-        return segmentsIntersectStrict(a, c, b, d);
-    }
-    
-    // 严格线段相交 (跨立实验) - 用于判定是否为凸四边形
+    // 严格线段相交 (跨立实验) - 判定凸四边形：
+    // 原对角线 BC 与候选对角线 AD 必须严格相交，翻转才是几何安全的
     function segmentsIntersectStrict(a, b, c, d) {
         const cp1 = orient2d(a.x, a.y, b.x, b.y, c.x, c.y);
         const cp2 = orient2d(a.x, a.y, b.x, b.y, d.x, d.y);
         const cp3 = orient2d(c.x, c.y, d.x, d.y, a.x, a.y);
         const cp4 = orient2d(c.x, c.y, d.x, d.y, b.x, b.y);
-        // 必须严格跨立 (乘积 < 0)
-        return (cp1 * cp2 < -1e-9) && (cp3 * cp4 < -1e-9);
+        return (cp1 * cp2 < -EPS) && (cp3 * cp4 < -EPS);
     }
 
-    for (let iter = 0; iter < iterations; iter++) {
-        let flipped = false;
-        const edgeMap = new Map();
+    function hasBoth(v0, v1, v2, a, b) {
+        return (v0 === a || v1 === a || v2 === a) && (v0 === b || v1 === b || v2 === b);
+    }
 
-        // 构建边索引
-        for (let i = 0; i < indices.length; i += 3) {
+    const triCount = indices.length / 3;
+    if (triCount < 2) return indices;
+
+    for (let iter = 0; iter < iterations; iter++) {
+        // 每轮重新建边表。翻转是就地改写 indices 的，
+        // 沿用上一轮的边表会把「已被改写的三角形」当成原三角形，直接导致破面。
+        const edgeMap = new Map();
+        for (let t = 0; t < triCount; t++) {
             for (let j = 0; j < 3; j++) {
-                const v1 = indices[i + j];
-                const v2 = indices[i + (j + 1) % 3];
-                const key = v1 < v2 ? `${v1}_${v2}` : `${v2}_${v1}`;
-                if (!edgeMap.has(key)) edgeMap.set(key, []);
-                edgeMap.get(key).push({ triIdx: i, localIdx: j });
+                const v1 = indices[t * 3 + j];
+                const v2 = indices[t * 3 + (j + 1) % 3];
+                if (v1 === v2) continue;
+                const lo = v1 < v2 ? v1 : v2, hi = v1 < v2 ? v2 : v1;
+                const key = lo + '_' + hi;
+                let e = edgeMap.get(key);
+                if (!e) edgeMap.set(key, e = { v1: lo, v2: hi, tris: [] });
+                if (e.tris.length < 2) e.tris.push(t);
             }
         }
 
-        // 遍历所有内部共享边
-        for (const [key, shared] of edgeMap) {
-            if (shared.length !== 2) continue;
+        let flipped = false;
+        for (const e of edgeMap.values()) {
+            if (e.tris.length !== 2) continue;   // 边界边，不可翻转
+            const [t1, t2] = e.tris;
+            const b1 = t1 * 3, b2 = t2 * 3;
 
-            const t1Base = shared[0].triIdx;
-            const t2Base = shared[1].triIdx;
-            const t1Local = shared[0].localIdx;
-            
-            // T1 顶点: A, B, C (BC 是共享边)
-            const iA = indices[t1Base + (t1Local + 2) % 3];
-            const iB = indices[t1Base + t1Local];
-            const iC = indices[t1Base + (t1Local + 1) % 3];
+            // 实时读取当前顶点。本轮前面的翻转可能已经改写过这两个三角形，
+            // 一旦它们不再共享这条边就跳过（陈旧边表保护）。
+            const i0 = indices[b1], i1 = indices[b1 + 1], i2 = indices[b1 + 2];
+            const j0 = indices[b2], j1 = indices[b2 + 1], j2 = indices[b2 + 2];
+            if (!hasBoth(i0, i1, i2, e.v1, e.v2)) continue;
+            if (!hasBoth(j0, j1, j2, e.v1, e.v2)) continue;
 
-            // T2 顶点: D (相对顶点)
-            let iD = -1;
-            for (let k = 0; k < 3; k++) {
-                const idx = indices[t2Base + k];
-                if (idx !== iB && idx !== iC) { iD = idx; break; }
-            }
-            if (iD === -1) continue;
+            // T1 的对顶点 A，T2 的对顶点 D
+            const iA = (i0 !== e.v1 && i0 !== e.v2) ? i0 : ((i1 !== e.v1 && i1 !== e.v2) ? i1 : i2);
+            const iD = (j0 !== e.v1 && j0 !== e.v2) ? j0 : ((j1 !== e.v1 && j1 !== e.v2) ? j1 : j2);
+            if (iA === iD) continue;
+
+            // T1 中共享边的方向 (B -> C)；T2 中必然是 (C -> B)
+            let iB, iC;
+            if (i0 === e.v1 && i1 === e.v2) { iB = i0; iC = i1; }
+            else if (i1 === e.v1 && i2 === e.v2) { iB = i1; iC = i2; }
+            else if (i2 === e.v1 && i0 === e.v2) { iB = i2; iC = i0; }
+            else if (i0 === e.v2 && i1 === e.v1) { iB = i0; iC = i1; }
+            else if (i1 === e.v2 && i2 === e.v1) { iB = i1; iC = i2; }
+            else { iB = i2; iC = i0; }
 
             const A = vertices[iA], B = vertices[iB], C = vertices[iC], D = vertices[iD];
+            if (!A || !B || !C || !D) continue;
 
-            // --- 核心修复 ---
-            // 判定：四边形 ABDC 是否是严格凸四边形？
-            // 判定方法：原对角线 BC 与 潜在对角线 AD 必须严格相交。
-            // 只有相交，四边形才是凸的，翻转才不会产生重叠。
+            // 凸四边形判定：BC 与 AD 严格相交
             if (!segmentsIntersectStrict(B, C, A, D)) continue;
 
-            // --- 优化目标: Delaunay ---
-            // 如果点 D 在三角形 ABC 的外接圆内，则翻转能优化角度
-            if (inCircle(A, B, C, D)) {
-                indices[t1Base] = iA; indices[t1Base + 1] = iB; indices[t1Base + 2] = iD;
-                indices[t2Base] = iA; indices[t2Base + 1] = iD; indices[t2Base + 2] = iC;
-                flipped = true;
-            }
+            // Delaunay 条件 (绕序无关)
+            const s = orient2d(A.x, A.y, B.x, B.y, C.x, C.y);
+            if (s === 0) continue;
+            if (inCircleDet(A, B, C, D) * (s > 0 ? 1 : -1) <= EPS) continue;
+
+            // 翻转后必须与原三角形同向，否则三角形会「翻面」
+            if (orient2d(A.x, A.y, B.x, B.y, D.x, D.y) * s <= 0) continue;
+
+            indices[b1] = iA; indices[b1 + 1] = iB; indices[b1 + 2] = iD;
+            indices[b2] = iA; indices[b2 + 1] = iD; indices[b2 + 2] = iC;
+            flipped = true;
         }
         if (!flipped) break;
     }
     return indices;
+}
+
+// Moore 邻域，按顺时针排列（屏幕坐标系 y 向下）：上、右上、右、右下、下、左下、左、左上
+const MOORE_DIRS = [
+    { x: 0, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 0 }, { x: 1, y: 1 },
+    { x: 0, y: 1 }, { x: -1, y: 1 }, { x: -1, y: 0 }, { x: -1, y: -1 }
+];
+
+// 射线法：点是否在多边形环内
+function pointInRing(pt, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i].x, yi = ring[i].y, xj = ring[j].x, yj = ring[j].y;
+        if (((yi > pt.y) !== (yj > pt.y)) && (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
 }
 
 const ImageProcessor = {
@@ -227,46 +241,84 @@ const ImageProcessor = {
         }
         return { grid: newGrid, width, height };
     },
-    findContours: function(binaryImg) {
+    // 返回带孔洞结构的多边形: [{ outer: [...], holes: [[...], ...] }, ...]
+    // 之前的实现只找外轮廓，图形中间的洞会被当成实心三角化 —— 导出的模型「洞没了」。
+    findPolygons: function(binaryImg) {
         const { grid, width, height } = binaryImg;
         const paddedW = width + 2, paddedH = height + 2;
         const paddedGrid = new Uint8Array(paddedW * paddedH);
         for(let y=0; y<height; y++) for(let x=0; x<width; x++) if(grid[y*width+x]===1) paddedGrid[(y+1)*paddedW+(x+1)]=1;
+
+        // 4-邻域洪泛：与图框连通的背景 -> 2；孔内的背景保持 0，据此区分外轮廓与孔
+        // 注意 ±1 必须受行边界约束，否则会从行末「绕」到下一行首
         const queue = [0]; paddedGrid[0] = 2;
         while(queue.length > 0) {
             const idx = queue.pop();
-            const dirs = [-1, 1, -paddedW, paddedW];
-            for(let d of dirs) {
-                const nIdx = idx + d;
-                if(nIdx>=0 && nIdx<paddedGrid.length && paddedGrid[nIdx]===0) {
-                    paddedGrid[nIdx]=2; queue.push(nIdx);
-                }
-            }
+            const x = idx % paddedW;
+            if (x > 0 && paddedGrid[idx - 1] === 0) { paddedGrid[idx - 1] = 2; queue.push(idx - 1); }
+            if (x < paddedW - 1 && paddedGrid[idx + 1] === 0) { paddedGrid[idx + 1] = 2; queue.push(idx + 1); }
+            if (idx >= paddedW && paddedGrid[idx - paddedW] === 0) { paddedGrid[idx - paddedW] = 2; queue.push(idx - paddedW); }
+            if (idx + paddedW < paddedGrid.length && paddedGrid[idx + paddedW] === 0) { paddedGrid[idx + paddedW] = 2; queue.push(idx + paddedW); }
         }
-        const contours = [];
+
+        const toLocal = (c) => c.map(p => ({ x: p.x - 1, y: p.y - 1 }));
         const visited = new Uint8Array(paddedW * paddedH);
+
+        // 外轮廓：左邻是外部背景 2，虚拟前驱在西侧 -> startDirIdx = 2 (向东)
+        const outers = [];
         for (let y = 1; y < paddedH - 1; y++) {
             for (let x = 1; x < paddedW - 1; x++) {
                 const idx = y * paddedW + x;
                 if (paddedGrid[idx] === 1 && paddedGrid[idx - 1] === 2 && visited[idx] === 0) {
-                    const contour = ImageProcessor.traceContour(paddedGrid, visited, x, y, paddedW, paddedH);
-                    if (contour.length > 0) contours.push(contour.map(p => ({x: p.x - 1, y: p.y - 1})));
+                    const c = ImageProcessor.traceContour(paddedGrid, visited, x, y, paddedW, paddedH, 2);
+                    if (c.length > 2) outers.push(toLocal(c));
                 }
             }
         }
-        return contours;
+
+        // 孔洞：右邻是孔内背景 0，虚拟前驱在东侧 -> startDirIdx = 6 (向西)
+        const holes = [];
+        for (let y = 1; y < paddedH - 1; y++) {
+            for (let x = 1; x < paddedW - 1; x++) {
+                const idx = y * paddedW + x;
+                if (paddedGrid[idx] === 1 && paddedGrid[idx + 1] === 0 && visited[idx] === 0) {
+                    const c = ImageProcessor.traceContour(paddedGrid, visited, x, y, paddedW, paddedH, 6);
+                    if (c.length > 2) holes.push(toLocal(c));
+                }
+            }
+        }
+
+        // 归属：把孔挂到包含它的那个外轮廓上（找不到宿主的孤立环丢弃）
+        const polys = outers.map(o => ({ outer: o, holes: [] }));
+        for (const h of holes) {
+            for (let i = 0; i < polys.length; i++) {
+                if (pointInRing(h[0], polys[i].outer)) { polys[i].holes.push(h); break; }
+            }
+        }
+        return polys;
     },
-    traceContour: function(grid, visited, startX, startY, w, h) {
+
+    // 兼容旧调用：只要外轮廓
+    findContours: function(binaryImg) {
+        return ImageProcessor.findPolygons(binaryImg).map(p => p.outer);
+    },
+
+    traceContour: function(grid, visited, startX, startY, w, h, startDirIdx) {
         const contour = [];
         let cx = startX, cy = startY;
-        const dirs = [{x:0, y:-1}, {x:1, y:-1}, {x:1, y:0}, {x:1, y:1}, {x:0, y:1}, {x:-1, y:1}, {x:-1, y:0}, {x:-1, y:-1}];
-        let dirIdx = 6;
+        const dirs = MOORE_DIRS;
+        // startDirIdx 是「进入起点的移动方向」：
+        //   外轮廓起点左邻是背景，虚拟前驱在西侧 -> 2 (向东)
+        //   孔洞起点右邻是背景，虚拟前驱在东侧 -> 6 (向西)
+        // (dirIdx + 4) 得到来向，(dirIdx + 5) 从「来向的下一个」开始顺时针找，
+        // 才不会原地掉头走成 2x2 的 4 点死环（旧实现用 +6 会直接切进图形内部）。
+        let dirIdx = startDirIdx === undefined ? 2 : startDirIdx;
         let loops = 0; const maxLoops = w * h * 2;
         do {
             contour.push({x: cx, y: cy});
             visited[cy * w + cx] = 1;
             let found = false;
-            const startDir = (dirIdx + 6) % 8;
+            const startDir = (dirIdx + 5) % 8;
             for (let i = 0; i < 8; i++) {
                 const idx = (startDir + i) % 8;
                 const nx = cx + dirs[idx].x, ny = cy + dirs[idx].y;
@@ -280,6 +332,87 @@ const ImageProcessor = {
         return contour;
     }
 };
+
+// 多边形净面积 = |外环| - Σ|孔|
+function polygonNetArea(vertices, rings) {
+    let area = 0, start = 0;
+    for (let r = 0; r < rings.length; r++) {
+        const n = rings[r];
+        const ring = vertices.slice(start, start + n);
+        start += n;
+        let s = 0;
+        for (let i = 0; i < ring.length; i++) {
+            const p = ring[i], q = ring[(i + 1) % ring.length];
+            s += p.x * q.y - q.x * p.y;
+        }
+        area += (r === 0 ? Math.abs(s) : -Math.abs(s)) / 2;
+    }
+    return area;
+}
+
+function triangleAreaSum(vertices, indices) {
+    let s = 0;
+    for (let i = 0; i < indices.length; i += 3) {
+        const A = vertices[indices[i]], B = vertices[indices[i + 1]], C = vertices[indices[i + 2]];
+        if (!A || !B || !C) continue;
+        s += Math.abs((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x)) / 2;
+    }
+    return s;
+}
+
+// 三角化一个带孔多边形，并校验「Σ三角形面积 == 多边形净面积」。
+// earcut 消除孔洞时靠 findHoleBridge 找桥接点，某些几何/精度组合下它会返回 null
+// 并把洞静默丢弃（洞被填实）。这里一旦检测到覆盖率偏离，就换个简化容差重试。
+function buildPolygonMesh(outerRing, holeRings, tolerance) {
+    const attempt = (tol) => {
+        const outer = cleanContour(simplifyPoints(outerRing, tol), 1.5);
+        if (outer.length < 3) return null;
+        const holes = [];
+        for (const h of holeRings) {
+            const ch = cleanContour(simplifyPoints(h, tol), 1.5);
+            if (ch.length >= 3) holes.push(ch);
+        }
+        const vertices = outer.slice();
+        const flatCoords = [];
+        outer.forEach(p => flatCoords.push(p.x, p.y));
+        const rings = [outer.length];
+        const holeIndices = [];
+        for (const h of holes) {
+            holeIndices.push(flatCoords.length / 2);
+            h.forEach(p => { flatCoords.push(p.x, p.y); vertices.push(p); });
+            rings.push(h.length);
+        }
+        const indices = earcut(flatCoords, holeIndices.length ? holeIndices : null);
+        return { vertices, indices, rings };
+    };
+
+    const errorOf = (r) => {
+        const net = polygonNetArea(r.vertices, r.rings);
+        if (net <= 0) return Infinity;
+        return Math.abs(triangleAreaSum(r.vertices, r.indices) - net) / net;
+    };
+
+    // 重试容差上限：不允许把轮廓简化到失去形状（约 200 个特征点的尺度）
+    let peri = 0;
+    for (let i = 0; i < outerRing.length; i++) {
+        const a = outerRing[i], b = outerRing[(i + 1) % outerRing.length];
+        peri += Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    const cap = Math.max(tolerance, peri / 200);
+
+    let best = null, bestErr = Infinity;
+    // 第一个就是用户设定的容差，正常情况直接命中返回，无额外开销
+    const tries = [...new Set([1, 1.37, 0.73, 2.1, 3.3, 5.7, 9.1]
+        .map(k => Math.min(tolerance * k, cap)))];
+    for (const tol of tries) {
+        const r = attempt(tol);
+        if (!r || r.indices.length === 0) continue;
+        const err = errorOf(r);
+        if (err <= 0.02) return r;
+        if (err < bestErr) { bestErr = err; best = r; }
+    }
+    return best;
+}
 
 // --- 应用状态 ---
 let originalImage = null;
@@ -547,12 +680,12 @@ function startMeshGeneration() {
             let binary = ImageProcessor.threshold(imageData, threshVal, keyColor, tolerance);
             if (expansionVal > 0) binary = ImageProcessor.dilate(binary, expansionVal);
 
-            const rawContours = ImageProcessor.findContours(binary);
+            const polygons = ImageProcessor.findPolygons(binary);
             const precisionSlider = parseInt(document.getElementById('precision').value);
             const pixelTolerance = precisionSlider * 0.1;
             
             processedMeshes = [];
-            processContoursAsync(rawContours, pixelTolerance);
+            processContoursAsync(polygons, pixelTolerance);
             
         } catch (e) {
             console.error(e);
@@ -562,50 +695,51 @@ function startMeshGeneration() {
     }, 50);
 }
 
-function processContoursAsync(contours, tolerance) {
+function ringPerimeter(ring) {
+    let p = 0;
+    for (let i = 0; i < ring.length; i++) {
+        const a = ring[i], b = ring[(i + 1) % ring.length];
+        p += Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+    }
+    return p;
+}
+
+function processContoursAsync(polygons, tolerance) {
     let index = 0;
     let totalVerts = 0;
     let totalTris = 0;
-    const total = contours.length;
+    const total = polygons.length;
 
     function loop() {
         if (meshGenerationCancel) return;
         
         const loopStart = performance.now();
         while (index < total && performance.now() - loopStart < 16) {
-            const contour = contours[index];
+            const poly = polygons[index];
+            const outerRing = poly.outer;
+
+            let perimeter = ringPerimeter(outerRing);
+            for (const h of poly.holes) perimeter += ringPerimeter(h);
             
-            let perimeter = 0;
-            for(let i=0; i<contour.length; i++) {
-                const p1 = contour[i], p2 = contour[(i+1)%contour.length];
-                perimeter += Math.sqrt((p1.x-p2.x)**2 + (p1.y-p2.y)**2);
-            }
-            
-            if (perimeter > 20 && contour.length > 5) {
+            if (perimeter > 20 && outerRing.length > 5) {
                 let safeTolerance = tolerance;
-                if (contour.length > 3000 && safeTolerance < 1.0) safeTolerance = 1.0; 
-                if (contour.length > 10000 && safeTolerance < 3.0) safeTolerance = 3.0;
+                if (outerRing.length > 3000 && safeTolerance < 1.0) safeTolerance = 1.0; 
+                if (outerRing.length > 10000 && safeTolerance < 3.0) safeTolerance = 3.0;
 
-                // 1. 简化 (RDP)
-                let simplified = simplifyPoints(contour, safeTolerance);
-                
-                // 2. 清洗 (关键修复：去除距离 < 1.5px 的点 和 共线点)
-                simplified = cleanContour(simplified, 1.5);
+                // 1. 简化 (RDP) + 清洗 + 2. Earcut (带孔洞) + 覆盖率校验
+                const built = buildPolygonMesh(outerRing, poly.holes, safeTolerance);
 
-                if (simplified.length >= 3) {
-                    const flatCoords = [];
-                    simplified.forEach(p => flatCoords.push(p.x, p.y));
-                    
-                    // 3. Earcut
-                    let indices = earcut(flatCoords);
-                    
-                    // 4. 优化 (严格凸性检测)
+                if (built) {
+                    const vertices = built.vertices;
+                    let indices = built.indices;
+
+                    // 3. Delaunay 翻转优化
                     if (indices.length > 0) {
-                        indices = optimizeMeshTopology(simplified, indices, 6);
+                        indices = optimizeMeshTopology(vertices, indices, 6);
                     }
 
-                    processedMeshes.push({ vertices: simplified, indices: indices });
-                    totalVerts += simplified.length;
+                    processedMeshes.push({ vertices: vertices, indices: indices, rings: built.rings });
+                    totalVerts += vertices.length;
                     totalTris += indices.length / 3;
                 }
             }
@@ -671,9 +805,14 @@ function draw() {
                 ctx.lineWidth = 1.5 / scale;
                 ctx.lineJoin = 'round';
                 ctx.beginPath();
-                if(verts.length > 0) {
-                    ctx.moveTo(verts[0].x, verts[0].y);
-                    for(let i=1; i<verts.length; i++) ctx.lineTo(verts[i].x, verts[i].y);
+                const rings = mesh.rings || [verts.length];
+                let ringStart = 0;
+                for (const n of rings) {
+                    const ring = verts.slice(ringStart, ringStart + n);
+                    ringStart += n;
+                    if (ring.length < 2) continue;
+                    ctx.moveTo(ring[0].x, ring[0].y);
+                    for (let i = 1; i < ring.length; i++) ctx.lineTo(ring[i].x, ring[i].y);
                     ctx.closePath();
                 }
                 ctx.stroke();
@@ -850,31 +989,46 @@ function clearKeyColor() {
 
 function exportModel() {
     if (processedMeshes.length === 0) { alert("没有生成网格数据"); return; }
-    let objContent = "# Generated by Img2Mesh\n";
-    let globalVertCount = 0;
     const imgWidth = originalImage.width;
     const imgHeight = originalImage.height;
     const aspectRatio = imgWidth / imgHeight;
+
+    // 先把所有顶点算出来，再统一写面 —— 这样才能按最终 3D 坐标校正绕序。
+    // 图像 y 轴向下，3D 的 y 轴向上，这个翻转会让三角形绕序整体反转；
+    // 不校正的话导出的模型所有面法线朝 -Z，开了背面剔除的软件里就是「破面 / 看不见」。
+    const vertsOut = [];
+    const facesOut = [];
+    let base = 0;
     processedMeshes.forEach(mesh => {
-        const verts = mesh.vertices;
-        const inds = mesh.indices;
-        verts.forEach(p => {
+        mesh.vertices.forEach(p => {
             const vx = (p.x / imgWidth - 0.5) * 2 * aspectRatio;
-            const vy = -(p.y / imgHeight - 0.5) * 2; 
-            const vz = 0;
+            const vy = -(p.y / imgHeight - 0.5) * 2;
             const u = p.x / imgWidth;
             const v = 1.0 - (p.y / imgHeight);
-            objContent += `v ${vx.toFixed(6)} ${vy.toFixed(6)} ${vz.toFixed(6)}\n`;
-            objContent += `vt ${u.toFixed(6)} ${v.toFixed(6)}\n`;
+            vertsOut.push({ vx, vy, u, v });
         });
+        const inds = mesh.indices;
         for (let i = 0; i < inds.length; i += 3) {
-            const idx1 = globalVertCount + inds[i] + 1;
-            const idx2 = globalVertCount + inds[i+1] + 1;
-            const idx3 = globalVertCount + inds[i+2] + 1;
-            objContent += `f ${idx1}/${idx1} ${idx2}/${idx2} ${idx3}/${idx3}\n`;
+            let a = base + inds[i], b = base + inds[i + 1], c = base + inds[i + 2];
+            const A = vertsOut[a], B = vertsOut[b], C = vertsOut[c];
+            const nz = (B.vx - A.vx) * (C.vy - A.vy) - (B.vy - A.vy) * (C.vx - A.vx);
+            if (nz === 0) continue;                 // 退化面，丢弃
+            if (nz < 0) { const t = b; b = c; c = t; }  // 强制法线朝 +Z
+            facesOut.push([a, b, c]);
         }
-        globalVertCount += verts.length;
+        base += mesh.vertices.length;
     });
+
+    let objContent = "# Generated by Img2Mesh\n";
+    vertsOut.forEach(p => {
+        objContent += `v ${p.vx.toFixed(6)} ${p.vy.toFixed(6)} 0.000000\n`;
+        objContent += `vt ${p.u.toFixed(6)} ${p.v.toFixed(6)}\n`;
+    });
+    facesOut.forEach(([a, b, c]) => {
+        const ia = a + 1, ib = b + 1, ic = c + 1;
+        objContent += `f ${ia}/${ia} ${ib}/${ib} ${ic}/${ic}\n`;
+    });
+
     const blob = new Blob([objContent], {type: "text/plain"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
