@@ -1,0 +1,10 @@
+# 测试产物
+tests/out/
+tests/fixture.rgba
+tests/fixture.json
+
+# 编辑器 / 系统
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
