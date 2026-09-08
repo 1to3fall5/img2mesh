@@ -418,7 +418,7 @@ function buildPolygonMesh(outerRing, holeRings, tolerance) {
 let originalImage = null;
 let processedMeshes = [];
 let previewMask = null; 
-let scale = 1.0, offsetX = 0, offsetY = 0, isDragging = false, lastMousePos = {x:0,y:0};
+let scale = 1.0, offsetX = 0, offsetY = 0;
 let keyColor = null;
 let thresholdState = { alpha: 50, color: 30 };
 let appMode = 'mask'; // 'mask' 或 'mesh'
@@ -515,6 +515,7 @@ function loadImage(src, fileName) {
         detectTransparencyAndSwitch(img);
         
         // 确保切回 mask 模式并重绘
+        syncKeyColorUI();
         setAppMode('mask');
         requestAnimationFrame(draw);
     }
@@ -845,41 +846,6 @@ function draw() {
 }
 
 const mainView = document.getElementById('mainView');
-mainView.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left; 
-    const my = e.clientY - rect.top;
-    
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.min(Math.max(0.01, scale * delta), 50.0);
-    
-    offsetX = mx - (mx - offsetX) * (newScale / scale);
-    offsetY = my - (my - offsetY) * (newScale / scale);
-    
-    if (!Number.isFinite(offsetX)) offsetX = 0;
-    if (!Number.isFinite(offsetY)) offsetY = 0;
-    
-    scale = newScale;
-    requestAnimationFrame(draw);
-}, { passive: false });
-
-mainView.addEventListener('mousedown', (e) => {
-    if (document.getElementById('colorPickerMode').checked && e.button === 0) {
-        pickColor(e);
-    } else if (e.button === 0) {
-        isDragging = true; lastMousePos = { x: e.clientX, y: e.clientY };
-    }
-});
-window.addEventListener('mouseup', () => isDragging = false);
-window.addEventListener('mousemove', (e) => {
-    if (isDragging) {
-        offsetX += e.clientX - lastMousePos.x;
-        offsetY += e.clientY - lastMousePos.y;
-        lastMousePos = { x: e.clientX, y: e.clientY };
-        requestAnimationFrame(draw);
-    }
-});
 
 function resetView() {
     if(!originalImage) return;
@@ -927,12 +893,7 @@ function handleColorPickerChange(e) {
     const b = parseInt(color.substr(5,2), 16);
     
     keyColor = [r, g, b];
-    
-    const colorBox = document.getElementById('keyColorBox');
-    colorBox.style.background = color;
-    colorBox.classList.add('has-color');
-    
-    document.getElementById('keyColorText').innerText = color.toUpperCase();
+    syncKeyColorUI();
     
     // 如果当前不是吸色模式，确保标签和滑块状态正确
     const label = document.getElementById('thresholdLabel');
@@ -956,15 +917,7 @@ function pickColor(e) {
         tc.getContext('2d').drawImage(originalImage, ix, iy, 1, 1, 0, 0, 1, 1);
         const p = tc.getContext('2d').getImageData(0,0,1,1).data;
         keyColor = [p[0], p[1], p[2]];
-        
-        const hex = "#" + ((1 << 24) + (p[0] << 16) + (p[1] << 8) + p[2]).toString(16).slice(1).toUpperCase();
-        
-        const colorBox = document.getElementById('keyColorBox');
-        colorBox.style.background = hex;
-        colorBox.classList.add('has-color');
-        
-        document.getElementById('keyColorPicker').value = hex;
-        document.getElementById('keyColorText').innerText = hex;
+        syncKeyColorUI();
         
         document.getElementById('colorPickerMode').checked = false;
         toggleColorPicker(); 
@@ -974,14 +927,30 @@ function pickColor(e) {
     }
 }
 
+// 把 keyColor 同步到色块 / 文本 / 清除按钮（清除按钮在没有选中颜色时禁用）
+function syncKeyColorUI() {
+    const colorBox = document.getElementById('keyColorBox');
+    const clearBtn = document.getElementById('clearColorBtn');
+    if (keyColor) {
+        const [r, g, b] = keyColor;
+        const hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+        colorBox.style.background = hex;
+        colorBox.classList.add('has-color');
+        document.getElementById('keyColorPicker').value = hex;
+        document.getElementById('keyColorText').innerText = hex;
+    } else {
+        colorBox.style.background = 'transparent';
+        colorBox.classList.remove('has-color');
+        document.getElementById('keyColorPicker').value = '#000000';
+        document.getElementById('keyColorText').innerText = '#000000';
+    }
+    if (clearBtn) clearBtn.disabled = !keyColor;
+}
+
 function clearKeyColor() {
     keyColor = null;
-    const colorBox = document.getElementById('keyColorBox');
-    colorBox.style.background = 'transparent';
-    colorBox.classList.remove('has-color');
-    document.getElementById('keyColorPicker').value = '#000000';
-    document.getElementById('keyColorText').innerText = '#000000';
-    
+    syncKeyColorUI();
+
     document.getElementById('colorPickerMode').checked = false;
     toggleColorPicker();
     updateMaskPreview();
@@ -1045,13 +1014,6 @@ const viewEls = {
     display: document.getElementById('zoomLevelDisplay')
 };
 
-function updateTransform() {
-    if (!originalImage) return;
-    canvas.style.transform = `translate(${offsetX - (canvas.width - originalImage.width * scale) / 2}px, ${offsetY - (canvas.height - originalImage.height * scale) / 2}px) scale(${scale / (Math.min((canvas.width * 0.8) / originalImage.width, (canvas.height * 0.8) / originalImage.height))})`;
-    // 注意：这里的 transform 逻辑由于 img2mesh 原本就在 draw 中使用了 scale/offset，
-    // 为了保持原本的 Canvas 渲染逻辑，我们直接操作原有的 scale 和 offsetX/Y 变量并触发重绘。
-}
-
 // 统一缩放逻辑
 function changeZoom(delta, centerX, centerY) {
     if (!originalImage) return;
@@ -1086,42 +1048,46 @@ viewEls.zoomIn.onclick = () => changeZoom(0.2);
 viewEls.zoomOut.onclick = () => changeZoom(-0.2);
 viewEls.reset.onclick = () => resetView();
 
-// 滚轮缩放支持 (覆盖原本简单的滚轮)
-canvas.removeEventListener('wheel', null); // 移除可能存在的旧监听
-canvas.addEventListener('wheel', (e) => {
-    if (!originalImage) return;
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    changeZoom(delta, e.clientX, e.clientY);
-}, { passive: false });
-
-// 鼠标拖拽平移支持
+// --- 平移与缩放：统一绑在 mainView 上，只保留一套 ---
+// 之前 mainView 和 canvas 各绑了一套，而 canvas 是 mainView 的子元素，
+// 事件冒泡后两套都会执行：平移位移被加两次（拖动速度翻倍）、滚轮缩放系数叠加。
+// （旧代码里的 canvas.removeEventListener('wheel', null) 是空操作，删不掉任何监听。）
 let isPanning = false;
-let lastPanX, lastPanY;
+let lastPanX = 0, lastPanY = 0;
+let panStartX = 0, panStartY = 0, panMoved = false;
 
-canvas.addEventListener('mousedown', (e) => {
-    if (e.button === 0 && !document.getElementById('colorPickerMode').checked) {
-        isPanning = true;
-        lastPanX = e.clientX;
-        lastPanY = e.clientY;
-    }
+mainView.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !originalImage) return;
+    isPanning = true;
+    panMoved = false;
+    panStartX = lastPanX = e.clientX;
+    panStartY = lastPanY = e.clientY;
 });
 
 window.addEventListener('mousemove', (e) => {
-    if (isPanning) {
-        const dx = e.clientX - lastPanX;
-        const dy = e.clientY - lastPanY;
-        offsetX += dx;
-        offsetY += dy;
-        lastPanX = e.clientX;
-        lastPanY = e.clientY;
-        requestAnimationFrame(draw);
-    }
+    if (!isPanning) return;
+    if (Math.abs(e.clientX - panStartX) > 3 || Math.abs(e.clientY - panStartY) > 3) panMoved = true;
+    offsetX += e.clientX - lastPanX;
+    offsetY += e.clientY - lastPanY;
+    lastPanX = e.clientX;
+    lastPanY = e.clientY;
+    requestAnimationFrame(draw);
 });
 
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
+    // 吸色模式下：没拖动才算「点击取色」，拖动仍然是平移
+    if (isPanning && e.button === 0 && !panMoved &&
+        document.getElementById('colorPickerMode').checked) {
+        pickColor(e);
+    }
     isPanning = false;
 });
+
+mainView.addEventListener('wheel', (e) => {
+    if (!originalImage) return;
+    e.preventDefault();
+    changeZoom(e.deltaY > 0 ? -0.1 : 0.1, e.clientX, e.clientY);
+}, { passive: false });
 
 // --- 主题切换支持 ---
 const themeToggle = document.getElementById('themeToggle');
